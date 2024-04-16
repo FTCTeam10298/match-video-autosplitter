@@ -1,5 +1,6 @@
 #!/bin/bash
 # Video AutoSplit continuous live downloader component, courtesy of FTC #10298 Brain Stormz
+# Using the method from https://www.reddit.com/r/youtubedl/comments/115etx6/switching_to_ytdlp_for_incrementally_downloading/
 # Usage: ./live-download.sh [url]
 # Example 1: ./live-download.sh https://www.twitch.tv/videos/412843875
 # Example 2: ./live-download.sh https://www.youtube.com/watch?v=7dauhDJG6tA
