@@ -87,7 +87,7 @@ echo "Download complete."
 FRAME_WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 stream.mp4)"
 FRAME_HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 stream.mp4)"
 
-OVERLAY_CHECK_AREA=$(bc -l <<< "0.143229167*$FRAME_WIDTH")x$(bc -l <<< "0.055555556*$FRAME_HEIGHT")+$(bc -l <<< "0.0*$FRAME_WIDTH")+$(bc -l <<< "0.773148148*$FRAME_HEIGHT")
+OVERLAY_CHECK_AREA=$(bc -l <<< "0.1*$FRAME_WIDTH")x$(bc -l <<< "0.055000000*$FRAME_HEIGHT")+$(bc -l <<< "0.0*$FRAME_WIDTH")+$(bc -l <<< "0.77*$FRAME_HEIGHT")
 
 MATCH_NUMBER_CHECK_AREA=$(bc -l <<< "0.3*$FRAME_WIDTH")x$(bc -l <<< "0.050000000*$FRAME_HEIGHT")+$(bc -l <<< "0.53*$FRAME_WIDTH")+$(bc -l <<< "0.773148148*$FRAME_HEIGHT")
 
