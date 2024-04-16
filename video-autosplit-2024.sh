@@ -8,6 +8,7 @@
 # - yt-dlp is installed
 # - ffmpeg is installed
 # - tesseract is installed (package may be called tesseract-ocr)
+# - imagemagick is installed (needed for the "convert" command)
 
 declare -i LAST_SPLIT_FRAMENUM
 CURRVIDNUM=1
