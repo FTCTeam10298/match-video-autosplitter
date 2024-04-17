@@ -108,9 +108,9 @@ while true
 do
     while true
     do
-        # The "30" is the increment between each frame that is grabbed and checked.
-        # Decrease the 30 for better accuracy, increase for better performance.
-        CURRFRAMETIME=$(echo "$CURRFRAMETIME + 30" | bc -l)
+        # The "1" is the increment between each frame that is grabbed and checked.
+        # Decrease the 1 for better accuracy, increase for better performance.
+        CURRFRAMETIME=$(echo "$CURRFRAMETIME + 1" | bc -l)
 
         while (( $(echo "$CURRFRAMETIME > $STREAM_LENGTH" | bc -l) )); do
             # Start by continually checking for more video
