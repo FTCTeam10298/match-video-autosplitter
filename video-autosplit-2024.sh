@@ -16,6 +16,8 @@ declare -i LAST_SPLIT_FRAMENUM
 declare -i VIDEO_NUMBER
 VIDEO_NUMBER=0
 
+VIDEO_FILENAME=""
+
 CURRFRAMETIME=0
 LAST_SPLIT_FRAMETIME=0
 DIFFTIME=0
@@ -57,18 +59,30 @@ live_download() {
     
     if [ -f ./stream.mp4.ytdl ]; then
         echo "./stream.mp4.ytdl exists, not overwriting"
+        VIDEO_FILENAME="stream.mp4.part"
         echo "Sleeping for 10 seconds"
     else
         # Check if LAST_FRAGMENT_FROM_CURRENT_OUTPUT is non-empty
         if [ -n "$LAST_FRAGMENT_FROM_CURRENT_OUTPUT" ]; then
+        
             LAST_FRAGMENT=$LAST_FRAGMENT_FROM_CURRENT_OUTPUT
             echo "Using updated last fragment value: "$LAST_FRAGMENT
-        elif [ "$LAST_FRAGMENT" -ne 0 ]; then
-            echo "No new last fragment value, using old value "$LAST_FRAGMENT
+            
             echo '{"downloader": {"current_fragment": {"index": '$LAST_FRAGMENT'}, "extra_state": {}}}' | tr -d '\n\f' > ./stream.mp4.ytdl
             mv stream.mp4 stream.mp4.part
+            VIDEO_FILENAME="stream.mp4.part"
+            
+        elif [ "$LAST_FRAGMENT" -ne 0 ]; then
+        
+            echo "No new last fragment value, using old value "$LAST_FRAGMENT
+            
+            echo '{"downloader": {"current_fragment": {"index": '$LAST_FRAGMENT'}, "extra_state": {}}}' | tr -d '\n\f' > ./stream.mp4.ytdl
+            mv stream.mp4 stream.mp4.part
+            VIDEO_FILENAME="stream.mp4.part"
+            
         else
             echo "No new last fragment value nor old value, skipping file write"
+            VIDEO_FILENAME="stream.mp4"
         fi
         
         echo "File writes complete (if applicable), sleeping for 10 seconds"
@@ -89,16 +103,16 @@ echo "Downloading stream..."
 live_download
 echo "Download complete."
 
-FRAME_WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 stream.mp4)"
-FRAME_HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 stream.mp4)"
+FRAME_WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 $VIDEO_FILENAME)"
+FRAME_HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 $VIDEO_FILENAME)"
 
 OVERLAY_CHECK_AREA=$(bc -l <<< "0.1*$FRAME_WIDTH")x$(bc -l <<< "0.055000000*$FRAME_HEIGHT")+$(bc -l <<< "0.0*$FRAME_WIDTH")+$(bc -l <<< "0.77*$FRAME_HEIGHT")
 
 MATCH_NUMBER_CHECK_AREA=$(bc -l <<< "0.3*$FRAME_WIDTH")x$(bc -l <<< "0.050000000*$FRAME_HEIGHT")+$(bc -l <<< "0.53*$FRAME_WIDTH")+$(bc -l <<< "0.773148148*$FRAME_HEIGHT")
 
 # Store the FPS of the stream for use later
-STREAM_FPS=$(ffprobe -hide_banner -show_streams stream.mp4 2>&1 | grep fps | awk '{split($0,a,"fps")}END{print a[1]}' | awk '{print $NF}')
-STREAM_LENGTH=$(ffprobe -i stream.mp4 -show_entries format=duration -v quiet -of csv="p=0")
+STREAM_FPS=$(ffprobe -hide_banner -show_streams $VIDEO_FILENAME 2>&1 | grep fps | awk '{split($0,a,"fps")}END{print a[1]}' | awk '{print $NF}')
+STREAM_LENGTH=$(ffprobe -i $VIDEO_FILENAME -show_entries format=duration -v quiet -of csv="p=0")
 
 echo "OVERLAY_CHECK_AREA: $OVERLAY_CHECK_AREA"
 echo "MATCH_NUMBER_CHECK_AREA: $MATCH_NUMBER_CHECK_AREA"
@@ -117,7 +131,7 @@ do
             # Start by continually checking for more video
             live_download
             # Update stream length
-            STREAM_LENGTH=$(ffprobe -i stream.mp4 -show_entries format=duration -v quiet -of csv="p=0")
+            STREAM_LENGTH=$(ffprobe -i $VIDEO_FILENAME -show_entries format=duration -v quiet -of csv="p=0")
             # Update number of new data attempts
             NEW_DATA_ATTEMPTS=$NEW_DATA_ATTEMPTS+1
             echo "Attempts to get new data: $NEW_DATA_ATTEMPTS"
@@ -127,7 +141,7 @@ do
                 echo e "Stream appears to have ended, encoding last clip\n"
                 DIFFTIME=$(echo "$CURRFRAMETIME - $LAST_SPLIT_FRAMETIME" | bc -l)
                 VIDEO_NUMBER=$VIDEO_NUMBER+1
-                ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $CURRENT_MATCH_STRING.mp4"
+                ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i $VIDEO_FILENAME -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $CURRENT_MATCH_STRING.mp4"
                 echo "\nStream appears to have ended, last clip has been encoded, everything is complete!"
                 exit
             fi
@@ -135,7 +149,7 @@ do
         
         NEW_DATA_ATTEMPTS=0
 
-        fn="stream.mp4"
+        fn=$VIDEO_FILENAME
         of="$TMPDIR/current.png"
         ffmpeg -hide_banner -nostats -loglevel warning -y -ss $CURRFRAMETIME -i $fn -update 1 -frames:v 1 -q:v 2 $of
 
@@ -168,6 +182,6 @@ do
 
     DIFFTIME=$(echo "$CURRFRAMETIME - $LAST_SPLIT_FRAMETIME" | bc -l)
     VIDEO_NUMBER=$VIDEO_NUMBER+1
-    ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $PREVIOUS_MATCH_STRING.mp4" &
+    ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i $VIDEO_FILENAME -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $PREVIOUS_MATCH_STRING.mp4" &
     LAST_SPLIT_FRAMETIME=$CURRFRAMETIME
 done
