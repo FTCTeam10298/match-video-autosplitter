@@ -11,7 +11,11 @@
 # - imagemagick is installed (needed for the "convert" command)
 
 declare -i LAST_SPLIT_FRAMENUM
-CURRVIDNUM=1
+#CURRVIDNUM=1
+
+declare -i VIDEO_NUMBER
+VIDEO_NUMBER=0
+
 CURRFRAMETIME=0
 LAST_SPLIT_FRAMETIME=0
 DIFFTIME=0
@@ -121,7 +125,8 @@ do
                 # appear to still be going, so encode the last clip and exit.
                 echo e "Stream appears to have ended, encoding last clip\n"
                 DIFFTIME=$(echo "$CURRFRAMETIME - $LAST_SPLIT_FRAMETIME" | bc -l)
-                ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$CURRENT_MATCH_STRING.mp4"
+                VIDEO_NUMBER=$VIDEO_NUMBER+1
+                ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $CURRENT_MATCH_STRING.mp4"
                 echo "\nStream appears to have ended, last clip has been encoded, everything is complete!"
                 exit
             fi
@@ -161,6 +166,7 @@ do
     echo "New match at time $CURRFRAMETIME: $CURRENT_MATCH_STRING"
 
     DIFFTIME=$(echo "$CURRFRAMETIME - $LAST_SPLIT_FRAMETIME" | bc -l)
-    ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$PREVIOUS_MATCH_STRING.mp4" &
+    VIDEO_NUMBER=$VIDEO_NUMBER+1
+    ffmpeg -hide_banner -ss $LAST_SPLIT_FRAMETIME -i stream.mp4 -t $DIFFTIME -vcodec copy -acodec copy "$VIDEO_NUMBER - $PREVIOUS_MATCH_STRING.mp4" &
     LAST_SPLIT_FRAMETIME=$CURRFRAMETIME
 done
