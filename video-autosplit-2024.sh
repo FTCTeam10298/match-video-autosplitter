@@ -47,7 +47,8 @@ NEW_DATA_ATTEMPTS=0
 # Using the method from https://www.reddit.com/r/youtubedl/comments/115etx6/switching_to_ytdlp_for_incrementally_downloading/
 live_download() {
     # Download whatever there currently is to download, resuming if applicable
-    yt-dlp -f b --verbose --continue --hls-prefer-native --live-from-start --parse-meta ":(?P<is_live>)" --fixup "never" $STREAM_URL -o "stream.%(ext)s" 2>&1 | tee "$TMPDIR/download-output.txt"
+    # Add `--live-from-start ` to commands if downloading a currently-live YouTube stream
+    yt-dlp -f b --verbose --continue --hls-prefer-native --parse-meta ":(?P<is_live>)" --fixup "never" $STREAM_URL -o "stream.%(ext)s" 2>&1 | tee "$TMPDIR/download-output.txt"
     
     echo -e "\n\nDownload Complete, sleeping for 10 seconds"
     sleep 10
