@@ -179,11 +179,11 @@ do
         ffmpeg -hide_banner -nostats -loglevel warning -y -ss $CURRFRAMETIME -i $fn -update 1 -frames:v 1 -q:v 2 $of
 
         # Check if overlay is present
+        echo "Checking for overlay at time $CURRFRAMETIME"
         convert $TMPDIR/current.png -crop $OVERLAY_CHECK_AREA $TMPDIR/overlay_check.png
         rm $TMPDIR/out.txt > /dev/null 2>&1
         tesseract $TMPDIR/overlay_check.png $TMPDIR/overlay_check > /dev/null 2>&1
         tr -dc '\0-\177' <$TMPDIR/overlay_check.txt | tr -d '\f' >$TMPDIR/tmp && mv $TMPDIR/tmp $TMPDIR/overlay_check.txt
-        echo "Checking for overlay at time $CURRFRAMETIME"
         grep CH $TMPDIR/overlay_check.txt > /dev/null 2>&1
         if [ $? -lt 1 ]
         then
@@ -196,6 +196,8 @@ do
 
             PREVIOUS_MATCH_STRING="$CURRENT_MATCH_STRING"
             CURRENT_MATCH_STRING="$(cat $TMPDIR/match_num.txt)"
+            
+            echo "Current match: $CURRENT_MATCH_STRING"
 
             # Compare the two frames to see if it's a new match
             if [ "$CURRENT_MATCH_STRING" != "$PREVIOUS_MATCH_STRING" ]; then
