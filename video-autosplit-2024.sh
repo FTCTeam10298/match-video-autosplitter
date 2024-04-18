@@ -10,6 +10,26 @@
 # - tesseract is installed (package may be called tesseract-ocr)
 # - imagemagick is installed (needed for the "convert" command)
 
+echo -e "----------------------------------------------------
+Video AutoSplit, courtesy of FTC #10298 Brain Stormz
+----------------------------------------------------\n"
+if [ -z "$1" ]; then
+    echo -e "Error: No stream passed!
+
+Usage: ./video-autosplit.sh [url]
+
+Example 1: ./video-autosplit.sh https://www.twitch.tv/videos/412843875
+Example 2: ./video-autosplit.sh https://www.youtube.com/watch?v=7dauhDJG6tA
+
+Requirements:
+ - The video has the standard FTC stream overlay (the one that shows the match timers/etc.)
+ - yt-dlp is installed
+ - ffmpeg is installed
+ - tesseract is installed (package may be called tesseract-ocr)
+ - imagemagick is installed (needed for the 'convert' command)"
+    exit
+fi
+
 declare -i LAST_SPLIT_FRAMENUM
 #CURRVIDNUM=1
 
