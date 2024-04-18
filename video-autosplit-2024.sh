@@ -30,6 +30,9 @@ Requirements:
     exit
 fi
 
+# Fix nasty slowdown of tesseract OCR when multiple processes running
+export OMP_THREAD_LIMIT=1
+
 declare -i LAST_SPLIT_FRAMENUM
 #CURRVIDNUM=1
 
