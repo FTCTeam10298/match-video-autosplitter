@@ -103,8 +103,10 @@ echo "Downloading stream..."
 live_download
 echo "Download complete."
 
-FRAME_WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 $VIDEO_FILENAME)"
-FRAME_HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 $VIDEO_FILENAME)"
+FRAME_WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 $VIDEO_FILENAME | head -n1)"
+FRAME_HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 $VIDEO_FILENAME | head -n1)"
+echo "Frame width: $FRAME_WIDTH"
+echo "Frame height: $FRAME_HEIGHT"
 
 OVERLAY_CHECK_AREA=$(bc -l <<< "0.1*$FRAME_WIDTH")x$(bc -l <<< "0.055000000*$FRAME_HEIGHT")+$(bc -l <<< "0.0*$FRAME_WIDTH")+$(bc -l <<< "0.77*$FRAME_HEIGHT")
 
