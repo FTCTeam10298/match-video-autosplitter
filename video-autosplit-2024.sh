@@ -73,7 +73,7 @@ live_download() {
     yt-dlp -f b --verbose --continue --hls-prefer-native --parse-meta ":(?P<is_live>)" --fixup "never" $STREAM_URL -o "stream.%(ext)s" 2>&1 | tee "$TMPDIR/download-output.txt"
     
     echo -e "\n\nDownload Complete, sleeping for 5 seconds"
-    #sleep 5
+    sleep 5
     
     LAST_FRAGMENT_FROM_CURRENT_OUTPUT="$(cat $TMPDIR/download-output.txt | grep 'Total fragments' | tr -dc '0123456789')"
     
@@ -108,7 +108,7 @@ live_download() {
     fi
     
     echo "Sleeping for 5 seconds"
-    #sleep 5
+    sleep 5
     echo -e "Sleep complete\n\n"
 }
 
