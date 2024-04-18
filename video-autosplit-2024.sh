@@ -181,7 +181,7 @@ do
         tesseract $TMPDIR/overlay_check.png $TMPDIR/overlay_check > /dev/null 2>&1
         tr -dc '\0-\177' <$TMPDIR/overlay_check.txt | tr -d '\f' >$TMPDIR/tmp && mv $TMPDIR/tmp $TMPDIR/overlay_check.txt
         echo "Checking for overlay at time $CURRFRAMETIME"
-        grep PION $TMPDIR/overlay_check.txt > /dev/null 2>&1
+        grep CH $TMPDIR/overlay_check.txt > /dev/null 2>&1
         if [ $? -lt 1 ]
         then
             # Overlay is present, let's check if it's a new match
