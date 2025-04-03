@@ -1,0 +1,10 @@
+{
+    "url": "https://www.youtube.com/watch?v=Vo2ejUMBUpw",
+    "output_dir": ".",
+    "frame_increment": 5.0,
+    "max_attempts": 30,
+    "template": "./2024-25_standard_overlay_check.png",
+    "search_string": "DIVE",
+    "overlay_area": "0.0,0.77,0.11,0.055",
+    "match_area": "0.53,0.773148148,0.3,0.05"
+}
