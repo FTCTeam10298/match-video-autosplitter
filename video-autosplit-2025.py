@@ -46,12 +46,21 @@ logger = logging.getLogger("video-autosplit")
 class VideoAutoSplitter:
     """Main class for handling video auto-splitting functionality"""
     
-    def __init__(self, stream_url, output_dir=None, frame_increment=5, max_attempts=30):
+    def __init__(self, stream_url, output_dir=None, frame_increment=5, max_attempts=30, 
+                 template_path=None, fallback_search_string="CH",
+                 overlay_area_coords=(0.0, 0.77, 0.1, 0.055),
+                 match_number_area_coords=(0.53, 0.773148148, 0.3, 0.05)):
         """Initialize the video splitter with parameters"""
         self.stream_url = stream_url
         self.output_dir = Path(output_dir) if output_dir else Path.cwd()
         self.frame_increment = frame_increment
         self.max_attempts = max_attempts
+        self.template_path = Path(template_path) if template_path else None
+        self.fallback_search_string = fallback_search_string
+        
+        # Configurable areas
+        self.overlay_area_coords = overlay_area_coords
+        self.match_number_area_coords = match_number_area_coords
         
         # Create unique temp directory
         self.tmpdir = Path(tempfile.gettempdir()) / f"video-autosplit-{uuid.uuid4()}"
@@ -76,6 +85,16 @@ class VideoAutoSplitter:
         
         # Track encoder processes
         self.encoder_processes = []
+        
+        # Load template if provided
+        self.template = None
+        if self.template_path and self.template_path.exists():
+            try:
+                self.template = cv2.imread(str(self.template_path))
+                logger.info(f"Loaded template image from {self.template_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load template image: {e}")
+                self.template = None
 
     def execute_command(self, command, capture_output=True, shell=False):
         """Execute a shell command and return its output."""
@@ -190,17 +209,16 @@ class VideoAutoSplitter:
             logger.warning(f"Failed to extract frame at {frame_time}")
             return False, "", ""
             
-        # Process the frame using OpenCV for better OCR results
         try:
             # Read the image
             img = cv2.imread(str(current_frame_path))
             if img is None:
                 logger.warning("Failed to read frame image")
                 return False, "", ""
-                
-            # Calculate areas for OCR
-            overlay_area = self.calculate_area(0.0, 0.77, 0.1, 0.055)
-            match_number_area = self.calculate_area(0.53, 0.773148148, 0.3, 0.05)
+            
+            # Calculate areas
+            overlay_area = self.calculate_area(*self.overlay_area_coords)
+            match_number_area = self.calculate_area(*self.match_number_area_coords)
             
             # Extract regions of interest
             overlay_roi = img[
@@ -208,59 +226,81 @@ class VideoAutoSplitter:
                 int(overlay_area[0]):int(overlay_area[0] + overlay_area[2])
             ]
             
-            # Save the overlay ROI for OCR
-            overlay_check_image = self.tmpdir / "overlay_check.png"
-            cv2.imwrite(str(overlay_check_image), overlay_roi)
+            # Try template matching if template is available
+            overlay_present = False
+            if self.template is not None:
+                # Resize template if necessary to match the region size
+                template_resized = cv2.resize(self.template, (overlay_roi.shape[1], overlay_roi.shape[0]))
+                
+                # Perform template matching
+                match_result = cv2.matchTemplate(overlay_roi, template_resized, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(match_result)
+                
+                # Check if the template match confidence is high enough
+                if max_val >= 0.7:  # Threshold can be adjusted
+                    logger.debug(f"Template match confidence: {max_val}")
+                    overlay_present = True
+                else:
+                    logger.debug(f"Template matching confidence too low: {max_val}")
             
-            # Perform OCR on overlay
-            overlay_text_file = self.tmpdir / "overlay_check.txt"
-            if overlay_text_file.exists():
-                overlay_text_file.unlink()
+            # If template matching failed or no template was provided, fall back to OCR
+            if not overlay_present:
+                logger.debug("Falling back to OCR for overlay detection")
+                # Save the overlay ROI for OCR
+                overlay_check_image = self.tmpdir / "overlay_check.png"
+                cv2.imwrite(str(overlay_check_image), overlay_roi)
                 
-            self.execute_command(['tesseract', str(overlay_check_image), 
-                                str(overlay_text_file).replace('.txt', '')])
+                # Perform OCR on overlay
+                overlay_text_file = self.tmpdir / "overlay_check.txt"
+                if overlay_text_file.exists():
+                    overlay_text_file.unlink()
+                    
+                self.execute_command(['tesseract', str(overlay_check_image), 
+                                   str(overlay_text_file).replace('.txt', '')])
+                
+                # Check if overlay contains search string
+                try:
+                    with open(overlay_text_file, "r") as f:
+                        overlay_text = f.read()
+                        
+                    overlay_text = re.sub(r'[^\x00-\x7F]+', '', overlay_text).replace('\f', '')
+                    
+                    if self.fallback_search_string in overlay_text:
+                        overlay_present = True
+                except Exception as e:
+                    logger.warning(f"Error reading OCR result: {e}")
             
-            # Check if overlay contains "CH" indicating the overlay is present
-            try:
-                with open(overlay_text_file, "r") as f:
-                    overlay_text = f.read()
-                    
-                overlay_text = re.sub(r'[^\x00-\x7F]+', '', overlay_text).replace('\f', '')
-                
-                if "CH" not in overlay_text:
-                    return False, "", ""
-                    
-                # Overlay is present, extract match number area
-                match_roi = img[
-                    int(match_number_area[1]):int(match_number_area[1] + match_number_area[3]), 
-                    int(match_number_area[0]):int(match_number_area[0] + match_number_area[2])
-                ]
-                
-                # Pre-process for better OCR
-                # Convert to grayscale
-                gray = cv2.cvtColor(match_roi, cv2.COLOR_BGR2GRAY)
-                # Apply threshold to get black and white image
-                _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-                
-                match_number_image = self.tmpdir / "match_number_check.png"
-                cv2.imwrite(str(match_number_image), thresh)
-                
-                match_text_file = self.tmpdir / "match_num.txt"
-                self.execute_command(['tesseract', str(match_number_image), 
-                                    str(match_text_file).replace('.txt', '')])
-                
-                # Read and clean up the match text
-                with open(match_text_file, "r") as f:
-                    match_text = f.read()
-                    
-                match_text = re.sub(r'[^\x00-\x7F]+', '', match_text).replace('\n', '').replace('\f', '')
-                match_text = match_text.strip()
-                
-                return True, overlay_text, match_text
-                
-            except Exception as e:
-                logger.warning(f"Error in OCR processing: {e}")
+            # If overlay is not present, return early
+            if not overlay_present:
                 return False, "", ""
+                
+            # Overlay is present (detected either by template or OCR), extract match number
+            match_roi = img[
+                int(match_number_area[1]):int(match_number_area[1] + match_number_area[3]), 
+                int(match_number_area[0]):int(match_number_area[0] + match_number_area[2])
+            ]
+            
+            # Pre-process for better OCR
+            # Convert to grayscale
+            gray = cv2.cvtColor(match_roi, cv2.COLOR_BGR2GRAY)
+            # Apply threshold to get black and white image
+            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            
+            match_number_image = self.tmpdir / "match_number_check.png"
+            cv2.imwrite(str(match_number_image), thresh)
+            
+            match_text_file = self.tmpdir / "match_num.txt"
+            self.execute_command(['tesseract', str(match_number_image), 
+                                str(match_text_file).replace('.txt', '')])
+            
+            # Read and clean up the match text
+            with open(match_text_file, "r") as f:
+                match_text = f.read()
+                
+            match_text = re.sub(r'[^\x00-\x7F]+', '', match_text).replace('\n', '').replace('\f', '')
+            match_text = match_text.strip()
+            
+            return True, "overlay-detected", match_text
                 
         except Exception as e:
             logger.warning(f"Error in frame analysis: {e}")
@@ -435,6 +475,11 @@ def main():
     parser.add_argument("--frame-increment", "-f", type=float, help="Time increment between frames to check (seconds)", default=5)
     parser.add_argument("--max-attempts", "-m", type=int, help="Maximum attempts to check for new data before quitting", default=30)
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--template", "-t", help="Path to overlay template image", default=None)
+    parser.add_argument("--search-string", "-s", help="Fallback search string for OCR detection", default="CH")
+    parser.add_argument("--overlay-area", help="Overlay area coordinates as x,y,width,height ratios (e.g. 0.0,0.77,0.1,0.055)", default="0.0,0.77,0.1,0.055")
+    parser.add_argument("--match-area", help="Match number area coordinates as x,y,width,height ratios (e.g. 0.53,0.773148148,0.3,0.05)", default="0.53,0.773148148,0.3,0.05")
+    
     args = parser.parse_args()
     
     # Set log level
@@ -470,13 +515,37 @@ Video AutoSplit, courtesy of FTC #10298 Brain Stormz
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     
+    # Parse area coordinates
+    try:
+        overlay_area_coords = tuple(float(x) for x in args.overlay_area.split(','))
+        match_area_coords = tuple(float(x) for x in args.match_area.split(','))
+        
+        if len(overlay_area_coords) != 4 or len(match_area_coords) != 4:
+            logger.error("Area coordinates must be exactly 4 values (x,y,width,height)")
+            sys.exit(1)
+    except ValueError:
+        logger.error("Invalid area coordinates format. Use x,y,width,height as float values")
+        sys.exit(1)
+    
     # Create and run the splitter
     splitter = VideoAutoSplitter(
         args.url,
         output_dir=output_dir,
         frame_increment=args.frame_increment,
-        max_attempts=args.max_attempts
+        max_attempts=args.max_attempts,
+        template_path=args.template,
+        fallback_search_string=args.search_string,
+        overlay_area_coords=overlay_area_coords,
+        match_number_area_coords=match_area_coords
     )
+    
+    if args.template:
+        logger.info(f"Using template matching with template: {args.template}")
+    else:
+        logger.info(f"Using OCR detection with search string: '{args.search_string}'")
+        
+    logger.info(f"Overlay area: {overlay_area_coords}")
+    logger.info(f"Match number area: {match_area_coords}")
     
     success = splitter.process()
     sys.exit(0 if success else 1)
