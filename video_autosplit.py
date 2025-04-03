@@ -89,13 +89,16 @@ class VideoAutoSplitter:
         
         # Load template if provided
         self.template = None
-        if self.template_path and self.template_path.exists():
-            try:
-                self.template = cv2.imread(str(self.template_path))
-                logger.info(f"Loaded template image from {self.template_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load template image: {e}")
-                self.template = None
+        if self.template_path:
+            if self.template_path.exists():
+                try:
+                    self.template = cv2.imread(str(self.template_path))
+                    logger.info(f"Loaded template image from {self.template_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load template image: {e}")
+                    self.template = None
+            else:
+                logger.warning(f"Failed to load template image that does not exist: {e}")
 
     def execute_command(self, command, capture_output=True, shell=False):
         """Execute a shell command and return its output."""
