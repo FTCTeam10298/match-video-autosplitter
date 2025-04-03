@@ -10,11 +10,10 @@ import json
 import argparse
 import logging
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 import threading
 import queue
-import re
 
 # Import the main VideoAutoSplitter class
 try:
@@ -76,16 +75,6 @@ class VideoAutoSplitGUI(tk.Tk):
         self.geometry("800x600")
         self.minsize(700, 500)
         
-        # Set up the main frame with padding
-        main_frame = ttk.Frame(self, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Create a style
-        style = ttk.Style()
-        style.configure("TLabel", padding=(0, 5))
-        style.configure("TButton", padding=5)
-        style.configure("TEntry", padding=3)
-        
         # Initialize configuration
         self.config = self.DEFAULT_CONFIG.copy()
         self.config_file_path = None
@@ -93,7 +82,7 @@ class VideoAutoSplitGUI(tk.Tk):
         self.splitter_thread = None
         
         # Create widgets
-        self.create_widgets(main_frame)
+        self.create_widgets()
         
         # Load default values into GUI
         self.load_config_to_gui()
@@ -101,133 +90,135 @@ class VideoAutoSplitGUI(tk.Tk):
         # Set up protocol for window closing
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-    def create_widgets(self, parent):
+    def create_widgets(self):
         """Create all GUI widgets"""
-        # Create notebook (tabbed interface)
-        notebook = ttk.Notebook(parent)
+        # Main frame with padding
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Config tab
+        # Create notebook with tabs (like FTCSwitcherGUI)
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Configuration Settings tab
         config_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(config_frame, text="Configuration")
+        notebook.add(config_frame, text="Configuration Settings")
+        self.create_config_widgets(config_frame)
         
-        # Console tab
-        console_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(console_frame, text="Console")
+        # Visual Settings tab
+        visual_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(visual_frame, text="Visual Settings")
+        self.create_visual_settings_widgets(visual_frame)
         
         # Help tab
         help_frame = ttk.Frame(notebook, padding="10")
         notebook.add(help_frame, text="Help")
-        
-        notebook.pack(fill=tk.BOTH, expand=True)
-        
-        # Configuration tab
-        self.create_config_widgets(config_frame)
-        
-        # Console tab
-        self.create_console_widgets(console_frame)
-        
-        # Help tab
         self.create_help_widgets(help_frame)
         
-    def create_config_widgets(self, parent):
-        """Create configuration widgets"""
-        # Create frames for organization
-        url_frame = ttk.Frame(parent)
-        url_frame.pack(fill=tk.X, pady=5)
+        # Control & Log Frame (below notebook like in FTCSwitcherGUI)
+        control_frame = ttk.Frame(main_frame, padding="10")
+        control_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        ttk.Label(url_frame, text="Stream URL:").pack(side=tk.LEFT)
-        self.url_entry = ttk.Entry(url_frame)
-        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        # Control buttons
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill=tk.X)
         
-        # Output directory
-        output_frame = ttk.Frame(parent)
-        output_frame.pack(fill=tk.X, pady=5)
+        self.start_button = ttk.Button(button_frame, text="Start Processing", command=self.start_processing)
+        self.start_button.pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(output_frame, text="Output Directory:").pack(side=tk.LEFT)
-        self.output_entry = ttk.Entry(output_frame)
-        self.output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
-        ttk.Button(output_frame, text="Browse...", command=self.browse_output).pack(side=tk.LEFT, padx=(5, 0))
+        self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_processing, state=tk.DISABLED)
+        self.stop_button.pack(side=tk.LEFT, padx=5)
         
-        # Frame increment and max attempts
-        timing_frame = ttk.Frame(parent)
-        timing_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(button_frame, text="Save Config", command=self.save_config).pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(timing_frame, text="Frame Increment (seconds):").pack(side=tk.LEFT)
-        self.frame_increment_var = tk.StringVar()
-        self.frame_increment_entry = ttk.Entry(timing_frame, width=10, textvariable=self.frame_increment_var)
-        self.frame_increment_entry.pack(side=tk.LEFT, padx=(5, 20))
+        # Status indicator (like in FTCSwitcherGUI)
+        self.status_var = tk.StringVar(value="Status: Not Running 🔴")
+        status_label = ttk.Label(button_frame, textvariable=self.status_var)
+        status_label.pack(side=tk.RIGHT, padx=5)
         
-        ttk.Label(timing_frame, text="Max Attempts:").pack(side=tk.LEFT)
-        self.max_attempts_var = tk.StringVar()
-        self.max_attempts_entry = ttk.Entry(timing_frame, width=10, textvariable=self.max_attempts_var)
-        self.max_attempts_entry.pack(side=tk.LEFT, padx=(5, 0))
+        # Log area
+        ttk.Label(control_frame, text="Log", font=("", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
         
-        # Template and search string
-        detection_frame = ttk.Frame(parent)
-        detection_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(detection_frame, text="Template Image:").pack(side=tk.LEFT)
-        self.template_entry = ttk.Entry(detection_frame)
-        self.template_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
-        ttk.Button(detection_frame, text="Browse...", command=self.browse_template).pack(side=tk.LEFT, padx=(5, 0))
-        
-        search_frame = ttk.Frame(parent)
-        search_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(search_frame, text="Fallback Search String:").pack(side=tk.LEFT)
-        self.search_string_var = tk.StringVar()
-        self.search_string_entry = ttk.Entry(search_frame, textvariable=self.search_string_var)
-        self.search_string_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
-        
-        # Area coordinates
-        ttk.Label(parent, text="Overlay Area (x,y,width,height):").pack(anchor=tk.W, pady=(10, 0))
-        self.overlay_area_var = tk.StringVar()
-        self.overlay_area_entry = ttk.Entry(parent, textvariable=self.overlay_area_var)
-        self.overlay_area_entry.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(parent, text="Match Number Area (x,y,width,height):").pack(anchor=tk.W, pady=(5, 0))
-        self.match_area_var = tk.StringVar()
-        self.match_area_entry = ttk.Entry(parent, textvariable=self.match_area_var)
-        self.match_area_entry.pack(fill=tk.X, pady=(0, 5))
-        
-        # Config buttons
-        config_buttons_frame = ttk.Frame(parent)
-        config_buttons_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Button(config_buttons_frame, text="Load Config", command=self.load_config).pack(side=tk.LEFT, padx=5)
-        ttk.Button(config_buttons_frame, text="Save Config", command=self.save_config).pack(side=tk.LEFT, padx=5)
-        ttk.Button(config_buttons_frame, text="Reset to Default", command=self.reset_to_default).pack(side=tk.LEFT, padx=5)
-        
-        # Bottom buttons
-        bottom_frame = ttk.Frame(parent)
-        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=10)
-        
-        self.start_button = ttk.Button(bottom_frame, text="Start Processing", command=self.start_processing)
-        self.start_button.pack(side=tk.RIGHT, padx=5)
-        
-        self.stop_button = ttk.Button(bottom_frame, text="Stop", command=self.stop_processing, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.RIGHT, padx=5)
-        
-    def create_console_widgets(self, parent):
-        """Create console output widgets"""
-        # Console output
-        ttk.Label(parent, text="Console Output:").pack(anchor=tk.W)
-        
-        # Create text widget with scrollbar
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        scrollbar = ttk.Scrollbar(frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.console_text = tk.Text(frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, height=20)
-        self.console_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.console_text.configure(state='disabled')
-        
-        scrollbar.config(command=self.console_text.yview)
+        # Create scrolled text for log output
+        self.console_text = scrolledtext.ScrolledText(control_frame, height=10)
+        self.console_text.pack(fill=tk.BOTH, expand=True)
+        self.console_text.config(state=tk.DISABLED)
         
         # Redirect standard output and error
         self.redirect = RedirectText(self.console_text)
+        
+    def create_config_widgets(self, parent):
+        """Create configuration widgets"""
+        # Source Settings
+        ttk.Label(parent, text="Source Settings", font=("", 12, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+        
+        ttk.Label(parent, text="Stream URL:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.url_entry = ttk.Entry(parent, width=30)
+        self.url_entry.grid(row=1, column=1, sticky=tk.W+tk.E, pady=2)
+        
+        ttk.Label(parent, text="Output Directory:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.output_entry = ttk.Entry(parent, width=30)
+        self.output_entry.grid(row=2, column=1, sticky=tk.W+tk.E, pady=2)
+        ttk.Button(parent, text="Browse...", command=self.browse_output).grid(row=2, column=2, sticky=tk.W, pady=2)
+        
+        # Process Settings
+        ttk.Label(parent, text="Process Settings", font=("", 12, "bold")).grid(
+            row=3, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
+        
+        ttk.Label(parent, text="Frame Increment (seconds):").grid(row=4, column=0, sticky=tk.W, pady=2)
+        self.frame_increment_var = tk.StringVar()
+        self.frame_increment_entry = ttk.Entry(parent, width=10, textvariable=self.frame_increment_var)
+        self.frame_increment_entry.grid(row=4, column=1, sticky=tk.W, pady=2)
+        
+        ttk.Label(parent, text="Max Attempts:").grid(row=5, column=0, sticky=tk.W, pady=2)
+        self.max_attempts_var = tk.StringVar()
+        self.max_attempts_entry = ttk.Entry(parent, width=10, textvariable=self.max_attempts_var)
+        self.max_attempts_entry.grid(row=5, column=1, sticky=tk.W, pady=2)
+        
+        ttk.Label(parent, text="Template Image:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        self.template_entry = ttk.Entry(parent, width=30)
+        self.template_entry.grid(row=6, column=1, sticky=tk.W+tk.E, pady=2)
+        ttk.Button(parent, text="Browse...", command=self.browse_template).grid(row=6, column=2, sticky=tk.W, pady=2)
+        
+        ttk.Label(parent, text="Fallback Search String:").grid(row=7, column=0, sticky=tk.W, pady=2)
+        self.search_string_var = tk.StringVar()
+        self.search_string_entry = ttk.Entry(parent, textvariable=self.search_string_var, width=30)
+        self.search_string_entry.grid(row=7, column=1, sticky=tk.W, pady=2)
+        
+        # Config file buttons
+        buttons_frame = ttk.Frame(parent)
+        buttons_frame.grid(row=8, column=0, columnspan=3, sticky=tk.W, pady=10)
+        
+        ttk.Button(buttons_frame, text="Load Config", command=self.load_config).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Save Config As...", command=self.save_config).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Reset to Default", command=self.reset_to_default).pack(side=tk.LEFT, padx=5)
+        
+    def create_visual_settings_widgets(self, parent):
+        """Create visual settings widgets (separate tab like FTCSwitcherGUI)"""
+        # Video Area Settings
+        ttk.Label(parent, text="Video Area Settings", font=("", 12, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+        
+        # Area coordinates
+        ttk.Label(parent, text="Overlay Area (x,y,width,height):").grid(
+            row=1, column=0, sticky=tk.W, pady=2)
+        self.overlay_area_var = tk.StringVar()
+        ttk.Entry(parent, textvariable=self.overlay_area_var, width=30).grid(
+            row=1, column=1, sticky=tk.W, pady=2)
+        
+        ttk.Label(parent, text="Match Number Area (x,y,width,height):").grid(
+            row=2, column=0, sticky=tk.W, pady=2)
+        self.match_area_var = tk.StringVar()
+        ttk.Entry(parent, textvariable=self.match_area_var, width=30).grid(
+            row=2, column=1, sticky=tk.W, pady=2)
+        
+        # Visual preview (placeholder)
+        preview_frame = ttk.LabelFrame(parent, text="Preview (Not Implemented)")
+        preview_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W+tk.E+tk.N+tk.S, pady=10)
+        
+        ttk.Label(preview_frame, text="A visual preview would show overlay\nand match number detection areas").pack(
+            padx=20, pady=20)
         
     def create_help_widgets(self, parent):
         """Create help information widgets"""
@@ -260,19 +251,11 @@ can also be used with the command-line version using the --config parameter.
 Example: python video-autosplit.py --config my_config.json
         """
         
-        # Create text widget with scrollbar for help text
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        scrollbar = ttk.Scrollbar(frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        help_text_widget = tk.Text(frame, wrap=tk.WORD, yscrollcommand=scrollbar.set)
-        help_text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Create scrolled text for help text
+        help_text_widget = scrolledtext.ScrolledText(parent)
+        help_text_widget.pack(fill=tk.BOTH, expand=True)
         help_text_widget.insert(tk.END, help_text)
         help_text_widget.configure(state='disabled')
-        
-        scrollbar.config(command=help_text_widget.yview)
         
     def browse_output(self):
         """Open file dialog to select output directory"""
@@ -325,7 +308,7 @@ Example: python video-autosplit.py --config my_config.json
                 self.config = config
                 self.config_file_path = file
                 self.load_config_to_gui()
-                messagebox.showinfo("Config Loaded", f"Configuration loaded from {file}")
+                logger.info(f"Configuration loaded from {file}")
                 
             except (json.JSONDecodeError, IOError) as e:
                 messagebox.showerror("Error Loading Config", f"Failed to load configuration: {str(e)}")
@@ -333,7 +316,8 @@ Example: python video-autosplit.py --config my_config.json
     def save_config(self):
         """Save current configuration to a JSON file"""
         # Update config from GUI
-        self.update_config_from_gui()
+        if not self.update_config_from_gui():
+            return
         
         filetypes = [
             ("JSON files", "*.json"),
@@ -351,7 +335,7 @@ Example: python video-autosplit.py --config my_config.json
                     json.dump(self.config, f, indent=4)
                     
                 self.config_file_path = file
-                messagebox.showinfo("Config Saved", f"Configuration saved to {file}")
+                logger.info(f"Configuration saved to {file}")
                 
             except IOError as e:
                 messagebox.showerror("Error Saving Config", f"Failed to save configuration: {str(e)}")
@@ -361,6 +345,7 @@ Example: python video-autosplit.py --config my_config.json
         if messagebox.askyesno("Confirm Reset", "Are you sure you want to reset to default values?"):
             self.config = self.DEFAULT_CONFIG.copy()
             self.load_config_to_gui()
+            logger.info("Configuration reset to defaults")
             
     def load_config_to_gui(self):
         """Load configuration values into GUI widgets"""
@@ -429,7 +414,7 @@ Example: python video-autosplit.py --config my_config.json
         output_dir = Path(self.config["output_dir"])
         output_dir.mkdir(exist_ok=True, parents=True)
         
-        # Prepare for processing
+        # Clear log area
         self.console_text.configure(state='normal')
         self.console_text.delete(1.0, tk.END)
         self.console_text.configure(state='disabled')
@@ -444,12 +429,14 @@ Example: python video-autosplit.py --config my_config.json
         log_handler = logging.StreamHandler(sys.stdout)
         log_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
         logger.addHandler(log_handler)
-        # logger.setLevel(logging.INFO)
         
         # Update UI state
         self.start_button.configure(state=tk.DISABLED)
         self.stop_button.configure(state=tk.NORMAL)
+        self.status_var.set("Status: Running 🟢")
         self.running = True
+        
+        logger.info("Processing started")
         
         # Parse area coordinates
         overlay_area_coords = tuple(float(x) for x in self.config["overlay_area"].split(','))
@@ -476,11 +463,11 @@ Example: python video-autosplit.py --config my_config.json
         try:
             success = self.splitter.process()
             if success:
-                print("\nProcessing completed successfully!")
+                logger.info("Processing completed successfully!")
             else:
-                print("\nProcessing completed with errors or was stopped.")
+                logger.warning("Processing completed with errors or was stopped.")
         except Exception as e:
-            print(f"\nError during processing: {e}")
+            logger.error(f"Error during processing: {e}")
         finally:
             self.after(100, self.processing_completed)
         
@@ -498,6 +485,7 @@ Example: python video-autosplit.py --config my_config.json
         # Update UI state
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
+        self.status_var.set("Status: Not Running 🔴")
         self.running = False
         
     def stop_processing(self):
