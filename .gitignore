@@ -1,3 +1,4 @@
 *.mp4
 *.part
 *.ytdl
+__pycache__
