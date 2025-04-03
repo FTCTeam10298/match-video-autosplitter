@@ -65,20 +65,21 @@ class VideoAutoSplitter:
         # Create unique temp directory
         self.tmpdir = Path(tempfile.gettempdir()) / f"video-autosplit-{uuid.uuid4()}"
         self.tmpdir.mkdir(exist_ok=True)
+        logger.info(f"Temporary directory: {self.tmpdir}")
         
         # Initialize state variables
-        self.video_number = 0
+        self.video_number = int(0)
         self.video_filename = ""
-        self.curr_frame_time = 0
-        self.last_split_frame_time = 0
+        self.curr_frame_time = 0.0
+        self.last_split_frame_time = 0.0
         self.current_match_string = "Intro"
         self.previous_match_string = "Intro"
-        self.frame_width = 0
-        self.frame_height = 0
-        self.stream_fps = 0
-        self.stream_length = 0
-        self.last_fragment = 0
-        self.new_data_attempts = 0
+        self.frame_width = int(0)
+        self.frame_height = int(0)
+        self.stream_fps = 0.0
+        self.stream_length = 0.0 # Length in seconds
+        self.last_fragment = int(0)
+        self.new_data_attempts = int(0)
         
         # Fix nasty slowdown of tesseract OCR when multiple processes running
         os.environ["OMP_THREAD_LIMIT"] = "1"
@@ -123,7 +124,9 @@ class VideoAutoSplitter:
             return None
 
     def live_download(self):
-        """Download the stream using yt-dlp."""
+        """
+        Download the stream using yt-dlp, using the method from https://www.reddit.com/r/youtubedl/comments/115etx6/switching_to_ytdlp_for_incrementally_downloading/
+        """
         logger.info("Downloading stream content...")
         
         # Download whatever there currently is to download, resuming if applicable
@@ -244,7 +247,7 @@ class VideoAutoSplitter:
                     logger.debug(f"Template matching confidence too low: {max_val}")
             
             # If template matching failed or no template was provided, fall back to OCR
-            if not overlay_present:
+            else:#if not overlay_present:
                 logger.debug("Falling back to OCR for overlay detection")
                 # Save the overlay ROI for OCR
                 overlay_check_image = self.tmpdir / "overlay_check.png"
@@ -264,6 +267,7 @@ class VideoAutoSplitter:
                         overlay_text = f.read()
                         
                     overlay_text = re.sub(r'[^\x00-\x7F]+', '', overlay_text).replace('\f', '')
+                    logger.debug(f"Read text: {overlay_text}")
                     
                     if self.fallback_search_string in overlay_text:
                         overlay_present = True
