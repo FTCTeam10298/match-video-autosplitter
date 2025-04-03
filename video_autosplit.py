@@ -469,6 +469,13 @@ class VideoAutoSplitter:
 
 
 def main():
+    # Import the gui module conditionally to avoid import errors
+    try:
+        import video_autosplit_gui
+        has_gui = True
+    except ImportError:
+        has_gui = False
+    
     parser = argparse.ArgumentParser(description="Video AutoSplit tool for FTC competition videos")
     parser.add_argument("url", nargs="?", help="URL of the stream to process")
     parser.add_argument("--output-dir", "-o", help="Output directory for video segments", default=".")
@@ -480,11 +487,53 @@ def main():
     parser.add_argument("--overlay-area", help="Overlay area coordinates as x,y,width,height ratios (e.g. 0.0,0.77,0.1,0.055)", default="0.0,0.77,0.1,0.055")
     parser.add_argument("--match-area", help="Match number area coordinates as x,y,width,height ratios (e.g. 0.53,0.773148148,0.3,0.05)", default="0.53,0.773148148,0.3,0.05")
     
-    args = parser.parse_args()
+    # Add GUI and config file options if GUI module is available
+    if has_gui:
+        parser.add_argument("--gui", "-g", action="store_true", help="Launch GUI mode")
+        parser.add_argument("--config", "-c", help="Path to configuration JSON file")
     
+    args = parser.parse_args()
+
     # Set log level
     if args.verbose:
+        logger.info("Enabling debug logging")
         logger.setLevel(logging.DEBUG)
+    
+    # If GUI is requested or no arguments provided, launch GUI if available
+    if (not args.url and len(sys.argv) == 1) or (has_gui and args.gui):
+        if has_gui:
+            app = video_autosplit_gui.VideoAutoSplitGUI()
+            app.mainloop()
+            return
+        else:
+            parser.print_help()
+            sys.exit(1)
+    
+    # Handle config file if provided
+    if has_gui and hasattr(args, 'config') and args.config:
+        config = video_autosplit_gui.load_config_from_file(args.config)
+        if not config:
+            logger.error("Failed to load config file. Exiting.")
+            sys.exit(1)
+            
+        # Use config values but allow command line arguments to override
+        for key, value in config.items():
+            if key == "url" and not args.url:
+                args.url = value
+            elif key == "output_dir" and args.output_dir == ".":
+                args.output_dir = value
+            elif key == "frame_increment" and args.frame_increment == 5:
+                args.frame_increment = float(value)
+            elif key == "max_attempts" and args.max_attempts == 30:
+                args.max_attempts = int(value)
+            elif key == "template" and args.template is None:
+                args.template = value
+            elif key == "search_string" and args.search_string == "CH":
+                args.search_string = value
+            elif key == "overlay_area" and args.overlay_area == "0.0,0.77,0.1,0.055":
+                args.overlay_area = value
+            elif key == "match_area" and args.match_area == "0.53,0.773148148,0.3,0.05":
+                args.match_area = value
     
     # Print header
     print("""----------------------------------------------------
