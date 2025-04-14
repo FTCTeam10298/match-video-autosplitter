@@ -45,12 +45,14 @@ logger = logging.getLogger("video-autosplit")
 class VideoAutoSplitter:
     """Main class for handling video auto-splitting functionality"""
 
-    def __init__(self, stream_url, output_dir = None, frame_increment = 5, max_attempts = 30,
+    def __init__(self, stream_url, output_file, output_dir = None, frame_increment = 5, max_attempts = 30,
                  template_path = None, fallback_search_string = "CH",
                  overlay_area_coords = (0.0, 0.77, 0.1, 0.055),
                  match_number_area_coords = (0.53, 0.773148148, 0.3, 0.05)):
         """Initialize the video splitter with parameters"""
         self.stream_url = stream_url
+        self.output_file = output_file
+        self.stream_process = None  # Track the streamlink background process
         self.output_dir = Path(output_dir) if output_dir else Path.cwd()
         self.frame_increment = frame_increment
         self.max_attempts = max_attempts
@@ -73,7 +75,7 @@ class VideoAutoSplitter:
 
         # Initialize state variables
         self.video_number = int(0)
-        self.video_filename = ""
+        self.video_filename = self.tmpdir / "stream.ts"
         self.curr_frame_time = 0.0
         self.last_split_frame_time = 0.0
         self.current_match_string = "Intro"
@@ -132,79 +134,28 @@ class VideoAutoSplitter:
 
     def live_download(self):
         """
-        Download the stream using yt-dlp, using the method from https://www.reddit.com/r/youtubedl/comments/115etx6/switching_to_ytdlp_for_incrementally_downloading/
+        Start downloading the stream using Streamlink into a .ts file.
+        The video file grows over time and is processed incrementally.
         """
-        logger.info("Downloading stream content...")
+        logger.info(f"Starting stream download to {self.video_filename}...")
 
-        # Download whatever there currently is to download, resuming if applicable
-        download_output_file = self.tmpdir / "download-output.txt"
+        streamlink_cmd = [
+            "streamlink",
+            self.stream_url,
+            "best",
+            "-o", str(self.video_filename)
+        ]
 
-        # Using a list of arguments is safer than shell=True, but yt-dlp with piping
-        # requires shell=True, so we need to be careful with the input
-        if '|' in self.stream_url or ';' in self.stream_url or '&' in self.stream_url:
-            logger.error("Invalid URL containing shell metacharacters")
-            sys.exit(1)
-
-        with open(download_output_file, 'w') as f:
-            result = subprocess.run([
-                'yt-dlp',
-                '-f', 'b',
-                '--verbose',
-                '--continue',
-                '--hls-prefer-native',
-                '--parse-meta', ':(?P<is_live>)',
-                '--fixup', 'never',
-                self.stream_url,
-                '-o', 'stream.%(ext)s'
-            ], stdout = f, stderr = subprocess.STDOUT)
-
-        logger.info("Download complete, processing results...")
-        time.sleep(2)
-
-        # Get the last fragment number from the download output
         try:
-            with open(download_output_file, "r") as f:
-                download_output = f.read()
-
-            last_fragment = 0
-            fragment_match = re.search(r'Total fragments: (\d+)', download_output)
-            if fragment_match:
-                last_fragment = int(fragment_match.group(1))
-                self.last_fragment = last_fragment
+            # Start streamlink in the background
+            self.stream_process = subprocess.Popen(
+                streamlink_cmd,
+                stdout = subprocess.DEVNULL,
+                stderr = subprocess.STDOUT
+            )
+            logger.info("Streamlink started successfully")
         except Exception as e:
-            logger.warning(f"Failed to read download output: {e}")
-
-        video_filename = ""
-        ytdl_state_file = Path("./stream.mp4.ytdl")
-
-        if ytdl_state_file.exists():
-            logger.info("Download state file exists, not overwriting")
-            video_filename = "stream.mp4.part"
-        else:
-            if self.last_fragment > 0:
-                logger.info(f"Using updated last fragment value: {self.last_fragment}")
-
-                # Create ytdl state file
-                ytdl_state = {
-                    "downloader": {
-                        "current_fragment": {"index": self.last_fragment},
-                        "extra_state": {}
-                    }
-                }
-
-                with open(ytdl_state_file, "w") as f:
-                    json.dump(ytdl_state, f)
-
-                if Path("stream.mp4").exists():
-                    shutil.move("stream.mp4", "stream.mp4.part")
-
-                video_filename = "stream.mp4.part"
-            else:
-                logger.info("No fragment value available, using default filename")
-                video_filename = "stream.mp4"
-
-        logger.info("File processing complete")
-        return video_filename
+            logger.error(f"Failed to start streamlink: {e}")
 
     def analyze_frame(self, frame_time):
         """Extract and analyze a frame from the video at the given time."""
@@ -367,14 +318,13 @@ class VideoAutoSplitter:
 
         cmd = [
             'ffmpeg', '-hide_banner', '-ss', str(start_time),
-            '-i', self.video_filename, '-t', str(duration),
-            '-vcodec', 'copy', '-acodec', 'copy', output_file
+            '-i', str(self.video_filename), '-t', str(duration),
+            '-vcodec', 'copy', '-acodec', 'copy', str(output_file)
         ]
 
-        # Run encoding in a separate thread to avoid blocking
         encoder_thread = threading.Thread(
             target = self.execute_command,
-            args = (cmd,),
+            args = ([str(arg) for arg in cmd],),  # Make sure everything is a string
             kwargs = {'capture_output': False}
         )
         encoder_thread.start()
@@ -394,8 +344,8 @@ class VideoAutoSplitter:
                           '-show_entries', 'stream=height', '-of', 'default=nw=1:nk=1',
                           self.video_filename]
 
-            self.frame_width = int(self.execute_command(width_cmd))
-            self.frame_height = int(self.execute_command(height_cmd))
+            self.frame_width = int(self.execute_command(width_cmd).splitlines()[0])
+            self.frame_height = int(self.execute_command(height_cmd).splitlines()[0])
             logger.info(f"Frame dimensions: {self.frame_width}x{self.frame_height}")
 
             # Get stream FPS
@@ -419,13 +369,21 @@ class VideoAutoSplitter:
         """Main processing loop."""
         try:
             # First download
-            self.video_filename = self.live_download()
-            if not self.video_filename:
-                logger.error("Failed to download video")
-                return False
+            self.live_download()
+            # Wait for stream.ts to be created and grow
+            wait_time = 0
+            max_wait_time = 15  # seconds
 
-            # Get video information
+            while not self.video_filename.exists() or self.video_filename.stat().st_size < 1024:
+                logger.info("Waiting for stream.ts to be created and grow...")
+                time.sleep(5)
+                wait_time += 1
+                if wait_time > max_wait_time:
+                    logger.error("Timed out waiting for stream.ts to be written.")
+                    return False
+
             if not self.get_video_info():
+                logger.error("Failed to retrieve video information.")
                 return False
 
             # Main processing loop
@@ -438,9 +396,12 @@ class VideoAutoSplitter:
                     # Check if we need more video
                     while self.curr_frame_time > self.stream_length:
                         logger.info("Reached end of current video, checking for more content...")
-                        self.video_filename = self.live_download()
 
-                        # Update stream length
+                        if self.stream_process and self.stream_process.poll() is not None:
+                            logger.info("Streamlink process has exited â€” likely end of stream.")
+                            break  # Exit inner loop, finalize segment
+
+                        # Try to update the stream length from the growing .ts file
                         length_cmd = ['ffprobe', '-i', self.video_filename, '-show_entries',
                                       'format=duration', '-v', 'quiet', '-of', 'csv=p=0']
                         try:
@@ -448,25 +409,25 @@ class VideoAutoSplitter:
                         except:
                             logger.warning("Failed to get updated stream length")
 
-                        # Update number of new data attempts
                         self.new_data_attempts += 1
                         logger.info(f"Attempts to get new data: {self.new_data_attempts}")
 
                         if self.new_data_attempts > self.max_attempts:
-                            # Stream appears to have ended
                             logger.info("Stream appears to have ended, processing final clip")
                             diff_time = self.curr_frame_time - self.last_split_frame_time
                             self.video_number += 1
                             output_file = self.output_dir / f"{self.video_number} - {self.current_match_string}.mp4"
                             self.split_video(self.last_split_frame_time, diff_time, str(output_file))
 
-                            # Wait for all encoder processes to complete
+                            # Wait for all encoder threads to finish
                             for p in self.encoder_processes:
                                 if p.is_alive():
                                     p.join()
 
                             logger.info("Processing complete!")
                             return True
+
+                        time.sleep(1)
 
                     # Reset attempts counter
                     self.new_data_attempts = 0
@@ -536,9 +497,22 @@ class VideoAutoSplitter:
             logger.error(f"Error in main process: {e}")
             return False
         finally:
-            # Clean up temp directory
-            if self.tmpdir.exists():
-                shutil.rmtree(self.tmpdir)
+            if self.stream_process and self.stream_process.poll() is None:
+                logger.info("Terminating streamlink process...")
+                self.stream_process.terminate()
+                try:
+                    self.stream_process.wait(timeout = 5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Streamlink process did not terminate in time.")
+
+            # Wait for OS to release the file handle
+            for _ in range(5):
+                try:
+                    shutil.rmtree(self.tmpdir)
+                    break
+                except PermissionError:
+                    logger.warning("Temp file still in use, retrying...")
+                    time.sleep(1)
 
 
 def main():
@@ -625,7 +599,7 @@ Video AutoSplit, courtesy of FTC #10298 Brain Stormz
         sys.exit(1)
 
     # Check for required dependencies
-    dependencies = ['yt-dlp', 'ffmpeg', 'ffprobe', 'tesseract', 'convert']
+    dependencies = ['yt-dlp', 'ffmpeg', 'ffprobe', 'convert']
     missing_deps = []
 
     for dep in dependencies:
@@ -662,6 +636,7 @@ Video AutoSplit, courtesy of FTC #10298 Brain Stormz
     splitter = VideoAutoSplitter(
         args.url,
         output_dir = output_dir,
+        output_file = str(output_dir / "stream.ts"),
         frame_increment = args.frame_increment,
         max_attempts = args.max_attempts,
         template_path = args.template,
