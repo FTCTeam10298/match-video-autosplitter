@@ -76,7 +76,7 @@ class VideoAutoSplitter:
         self.frame_width = int(0)
         self.frame_height = int(0)
         self.stream_fps = 0.0
-        self.stream_length = 0.0 # Length in seconds
+        self.stream_length = 0.0  # Length in seconds
         self.last_fragment = int(0)
         self.new_data_attempts = int(0)
 
@@ -201,8 +201,8 @@ class VideoAutoSplitter:
 
         # Extract current frame for analysis
         ffmpeg_cmd = [
-            'ffmpeg', '-hide_banner', '-nostats', '-loglevel', 'warning', 
-            '-y', '-ss', str(frame_time), '-i', self.video_filename, 
+            'ffmpeg', '-hide_banner', '-nostats', '-loglevel', 'warning',
+            '-y', '-ss', str(frame_time), '-i', self.video_filename,
             '-update', '1', '-frames:v', '1', '-q:v', '2', str(current_frame_path)
         ]
 
@@ -226,9 +226,9 @@ class VideoAutoSplitter:
 
             # Extract regions of interest
             overlay_roi = img[
-                int(overlay_area[1]):int(overlay_area[1] + overlay_area[3]), 
-                int(overlay_area[0]):int(overlay_area[0] + overlay_area[2])
-            ]
+                          int(overlay_area[1]):int(overlay_area[1] + overlay_area[3]),
+                          int(overlay_area[0]):int(overlay_area[0] + overlay_area[2])
+                          ]
 
             # Try template matching if template is available
             overlay_present = False
@@ -259,8 +259,8 @@ class VideoAutoSplitter:
                 if overlay_text_file.exists():
                     overlay_text_file.unlink()
 
-                self.execute_command(['tesseract', str(overlay_check_image), 
-                                   str(overlay_text_file).replace('.txt', '')])
+                self.execute_command(['tesseract', str(overlay_check_image),
+                                      str(overlay_text_file).replace('.txt', '')])
 
                 # Check if overlay contains search string
                 try:
@@ -281,9 +281,9 @@ class VideoAutoSplitter:
 
             # Overlay is present (detected either by template or OCR), extract match number
             match_roi = img[
-                int(match_number_area[1]):int(match_number_area[1] + match_number_area[3]), 
-                int(match_number_area[0]):int(match_number_area[0] + match_number_area[2])
-            ]
+                        int(match_number_area[1]):int(match_number_area[1] + match_number_area[3]),
+                        int(match_number_area[0]):int(match_number_area[0] + match_number_area[2])
+                        ]
 
             # Pre-process for better OCR
             # Convert to grayscale
@@ -295,8 +295,8 @@ class VideoAutoSplitter:
             cv2.imwrite(str(match_number_image), thresh)
 
             match_text_file = self.tmpdir / "match_num.txt"
-            self.execute_command(['tesseract', str(match_number_image), 
-                                str(match_text_file).replace('.txt', '')])
+            self.execute_command(['tesseract', str(match_number_image),
+                                  str(match_text_file).replace('.txt', '')])
 
             # Read and clean up the match text
             with open(match_text_file, "r") as f:
@@ -345,12 +345,12 @@ class VideoAutoSplitter:
         """Get information about the video file."""
         try:
             # Get video dimensions
-            width_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', 
-                        '-show_entries', 'stream=width', '-of', 'default=nw=1:nk=1', 
-                        self.video_filename]
-            height_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', 
-                        '-show_entries', 'stream=height', '-of', 'default=nw=1:nk=1', 
-                        self.video_filename]
+            width_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                         '-show_entries', 'stream=width', '-of', 'default=nw=1:nk=1',
+                         self.video_filename]
+            height_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                          '-show_entries', 'stream=height', '-of', 'default=nw=1:nk=1',
+                          self.video_filename]
 
             self.frame_width = int(self.execute_command(width_cmd))
             self.frame_height = int(self.execute_command(height_cmd))
@@ -481,21 +481,27 @@ def main():
     except ImportError:
         has_gui = False
 
-    parser = argparse.ArgumentParser(description="Video AutoSplit tool for FTC competition videos")
-    parser.add_argument("url", nargs="?", help="URL of the stream to process")
-    parser.add_argument("--output-dir", "-o", help="Output directory for video segments", default=".")
-    parser.add_argument("--frame-increment", "-f", type=float, help="Time increment between frames to check (seconds)", default=5)
-    parser.add_argument("--max-attempts", "-m", type=int, help="Maximum attempts to check for new data before quitting", default=30)
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--template", "-t", help="Path to overlay template image", default=None)
-    parser.add_argument("--search-string", "-s", help="Fallback search string for OCR detection", default="CH")
-    parser.add_argument("--overlay-area", help="Overlay area coordinates as x,y,width,height ratios (e.g. 0.0,0.77,0.1,0.055)", default="0.0,0.77,0.1,0.055")
-    parser.add_argument("--match-area", help="Match number area coordinates as x,y,width,height ratios (e.g. 0.53,0.773148148,0.3,0.05)", default="0.53,0.773148148,0.3,0.05")
+    parser = argparse.ArgumentParser(description = "Video AutoSplit tool for FTC competition videos")
+    parser.add_argument("url", nargs = "?", help = "URL of the stream to process")
+    parser.add_argument("--output-dir", "-o", help = "Output directory for video segments", default = ".")
+    parser.add_argument("--frame-increment", "-f", type = float,
+                        help = "Time increment between frames to check (seconds)", default = 5)
+    parser.add_argument("--max-attempts", "-m", type = int,
+                        help = "Maximum attempts to check for new data before quitting", default = 30)
+    parser.add_argument("--verbose", "-v", action = "store_true", help = "Enable verbose logging")
+    parser.add_argument("--template", "-t", help = "Path to overlay template image", default = None)
+    parser.add_argument("--search-string", "-s", help = "Fallback search string for OCR detection", default = "CH")
+    parser.add_argument("--overlay-area",
+                        help = "Overlay area coordinates as x,y,width,height ratios (e.g. 0.0,0.77,0.1,0.055)",
+                        default = "0.0,0.77,0.1,0.055")
+    parser.add_argument("--match-area",
+                        help = "Match number area coordinates as x,y,width,height ratios (e.g. 0.53,0.773148148,0.3,0.05)",
+                        default = "0.53,0.773148148,0.3,0.05")
 
     # Add GUI and config file options if GUI module is available
     if has_gui:
-        parser.add_argument("--gui", "-g", action="store_true", help="Launch GUI mode")
-        parser.add_argument("--config", "-c", help="Path to configuration JSON file")
+        parser.add_argument("--gui", "-g", action = "store_true", help = "Launch GUI mode")
+        parser.add_argument("--config", "-c", help = "Path to configuration JSON file")
 
     args = parser.parse_args()
 
