@@ -398,8 +398,10 @@ class VideoAutoSplitter:
                         logger.info("Reached end of current video, checking for more content...")
 
                         if self.stream_process and self.stream_process.poll() is not None:
-                            logger.info("Streamlink process has exited â€” likely end of stream.")
-                            break  # Exit inner loop, finalize segment
+                            logger.warning("Streamlink process has exited — attempting to restart...")
+                            self.live_download()  # Restart the streamlink process
+                            time.sleep(15)  # Allow some time for the process to restart
+                            continue
 
                         # Try to update the stream length from the growing .ts file
                         length_cmd = ['ffprobe', '-i', self.video_filename, '-show_entries',
@@ -418,7 +420,6 @@ class VideoAutoSplitter:
                             self.video_number += 1
                             output_file = self.output_dir / f"{self.video_number} - {self.current_match_string}.mp4"
                             self.split_video(self.last_split_frame_time, diff_time, str(output_file))
-
                             # Wait for all encoder threads to finish
                             for p in self.encoder_processes:
                                 if p.is_alive():
