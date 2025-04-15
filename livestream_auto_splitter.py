@@ -30,9 +30,13 @@ import threading
 import tempfile
 import cv2
 import numpy as np
-import requests
 import aiohttp
 import asyncio
+import requests
+
+from PIL import Image, ImageDraw, ImageFont
+
+import ftcevents
 
 # Configure logging
 logging.basicConfig(
@@ -51,7 +55,8 @@ class VideoAutoSplitter:
     def __init__(self, stream_url, output_file, output_dir = None, frame_increment = 5, max_attempts = 30,
                  template_path = None, fallback_search_string = "CH",
                  overlay_area_coords = (0.0, 0.77, 0.1, 0.055),
-                 match_number_area_coords = (0.53, 0.773148148, 0.3, 0.05), division = "CMP1"):
+                 match_number_area_coords = (0.53, 0.773148148, 0.3, 0.05), division = None, username = None,
+                 token = None):
         """Initialize the video splitter with parameters"""
         self.stream_url = stream_url
         self.output_file = output_file
@@ -61,12 +66,26 @@ class VideoAutoSplitter:
         self.max_attempts = max_attempts
         self.template_path = Path(template_path) if template_path else None
         self.fallback_search_string = fallback_search_string
-        self.division = re.search(r"twitch\.tv/firstinspires_(\w+)", stream_url).group(
-            1) if "twitch.tv/firstinspires_" in stream_url else division  # Division name
+        if "twitch.tv/firstinspires_" in stream_url:
+            match = re.search(r"twitch\.tv/firstinspires_(\w+)", stream_url)
+            self.division = match.group(1) if match else None
+            logger.info(f"Division extracted from stream URL: {self.division}")
+        elif division:
+            self.division = division
+            logger.info(f"Division manually specified: {self.division}")
+        else:
+            logger.error("Could not determine division — specify via --division or use a FIRST Twitch stream URL.")
+            raise ValueError("Missing division info in both URL and args.")
+        self.division_4code = self.division[:4].upper()
+        self.division_code = "FTCCMP1" + self.division[:4].upper()
+        self.event_name = "2025 Worlds " + self.division.capitalize() + " Division"
+        self.ftcevents_client = ftcevents.FTCEventsClient(username, token)
+        logger.info(
+            f"This recorder's divison is: {self.division}, code is {self.division_code}, event is {self.event_name}")
         # Configurable areas
         self.overlay_area_coords = overlay_area_coords
         self.match_number_area_coords = match_number_area_coords
-        self.timer_area_coords = (0.45, 0.9, 0.1, 0.1)
+        self.timer_area_coords = (0.45, 0.15, 0.1, 0.1)
         self.timer_history = []  # list of (timer_text, frame_time)
         self.match_active = False
         self.frames_with_zero_timer = 0
@@ -177,11 +196,32 @@ class VideoAutoSplitter:
         # Check if the frame extraction was successful
         if not current_frame_path.exists():
             logger.warning(f"Failed to extract frame at {frame_time}")
-            return False, "", "",""
+            return False, "", "", ""
 
         try:
             # Read the image
             img = cv2.imread(str(current_frame_path))
+            # Save debug image with rectangles drawn
+            overlay = self.calculate_area(*self.overlay_area_coords)
+            match = self.calculate_area(*self.match_number_area_coords)
+            timer = self.calculate_area(*self.timer_area_coords)
+
+            debug_img = img.copy()
+            cv2.rectangle(debug_img,
+                          (int(overlay[0]), int(overlay[1])),
+                          (int(overlay[0] + overlay[2]), int(overlay[1] + overlay[3])),
+                          (0, 255, 0), 2)  # Green for overlay
+            cv2.rectangle(debug_img,
+                          (int(match[0]), int(match[1])),
+                          (int(match[0] + match[2]), int(match[1] + match[3])),
+                          (255, 0, 0), 2)  # Blue for match number
+            cv2.rectangle(debug_img,
+                          (int(timer[0]), int(timer[1])),
+                          (int(timer[0] + timer[2]), int(timer[1] + timer[3])),
+                          (0, 0, 255), 2)  # Red for timer
+
+            cv2.imwrite(str(self.tmpdir / "debug_frame.png"), debug_img)
+
             if img is None:
                 logger.warning("Failed to read frame image")
                 return False, "", "", ""
@@ -369,11 +409,73 @@ class VideoAutoSplitter:
             logger.error(f"Failed to get video info: {e}")
             return False
 
+    def generate_match_thumb(self, client: ftcevents.FTCEventsClient, event: str, event_name: str, match_name: str):
+        """client: FTCEvents client.
+        event: event code
+        event_name: e.g. 2025 Franklin Division
+        match_name: the name straight off of the OCR'ed match value"""
+        logger.info(f"Generating match thumbnail for {event_name} - {match_name}")
+        teams = client.fetch("teams", eventCode = event)['teams']
+        team_map = {t['teamNumber']: t['nameShort'] for t in teams}
+        if "Qualification" in match_name:
+            match_numbers = re.findall(r"\d+", self.current_match_string)
+            match_number = f"{match_numbers[0]}" if len(match_numbers) == 2 else match_numbers[0]
+            match_name_ftc = f"Qualification {match_number}"
+        matches = client.get_schedule(eventcode = self.division_code) or {}
+        logger.debug(f"Matches: {matches.get(match_name_ftc)}")
+        match_ = matches.get(match_name_ftc) or {
+            'scoreRedFinal': 0,
+            'scoreBlueFinal': 0,
+            'redWins': False,
+            'blueWins': False,
+            'teams': [
+                {'teamNumber': 0, 'teamName': 'FTC-Events', 'station': 'Red1'},
+                {'teamNumber': 1, 'teamName': 'Please regenerate', 'station': 'Red2'},
+                {'teamNumber': 2, 'teamName': "API call failed!", 'station': 'Blue1'},
+                {'teamNumber': 3, 'teamName': 'me later!', 'station': 'Blue2'}
+            ]}
+        for team in match_['teams']:
+            if len(team['teamName']) > 27:
+                # thanks southstem
+                team['teamName'] = team['teamName'][:24] + "..."
+        logger.debug(f"Match data: {match_}")
 
+        red_teams = [t for t in match_['teams'] if t['station'].startswith('Red')]
+        blue_teams = [t for t in match_['teams'] if t['station'].startswith('Blue')]
 
-    async def upload_and_notify(self, output_file):
+        img = Image.open("template.png").copy()
+        title_fnt = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 48)
+        logger.debug(f"Font: {title_fnt}")
+        d = ImageDraw.Draw(img)
+        d.multiline_text((40, 22), event_name, font = title_fnt, fill = (0, 0, 0))
+        d.multiline_text((1920 - 40, 22), match_name, anchor = "ra", font = title_fnt, fill = (0, 0, 0))
+        team_fnt = ImageFont.truetype("LiberationSans-Bold.ttf", 132)
+        d.multiline_text((40, 175), "\n".join(str(t['teamNumber']) for t in red_teams), font = team_fnt, spacing = 20,
+                         fill = (255, 255, 255))
+        d.multiline_text((1920 - 40, 175), "\n".join(str(t['teamNumber']) for t in blue_teams),
+                         font = team_fnt, spacing = 20, anchor = "ra", align = "right", fill = (255, 255, 255))
+        name_fnt = ImageFont.truetype("LiberationSans-Bold.ttf", 36)
+        d.multiline_text((1920 / 2 - 40, 262), "\n".join(t['teamName'] for t in red_teams),
+                         align = "right", anchor = "ra",
+                         font = name_fnt, spacing = 105, fill = (255, 255, 255))
+        d.multiline_text((1920 / 2 + 40, 262), "\n".join(t['teamName'] for t in blue_teams),
+                         font = name_fnt, spacing = 105, fill = (255, 255, 255))
+        score_fnt = ImageFont.truetype("LiberationSans-Bold.ttf", 192)
+        d.multiline_text((1920 / 4 + 80, 640), str(match_.get('scoreRedFinal', "?")), anchor = "ma", font = score_fnt,
+                         fill = (255, 255, 255))
+        d.multiline_text((1920 * 3 / 4 - 80, 640), str(match_.get('scoreBlueFinal', "?")), anchor = "ma",
+                         font = score_fnt, fill = (255, 255, 255))
+        logger.debug(f"Added text to image: {img}")
+        return img, [t["teamNumber"] for t in match_["teams"]]
+
+    async def upload_and_notify(self, output_file, current_match_string: str):
         """Upload the video segment and notify the server."""
         # Wait 10 seconds to allow file to finalize
+
+        img, teams = self.generate_match_thumb(self.ftcevents_client, self.division_code, self.event_name,
+                                               current_match_string)
+        img.save(str(output_file.with_suffix(".png")), "PNG")
+        logger.debug(f"Teams in match: {teams}")
         await asyncio.sleep(30)
 
         # Run rclone asynchronously
@@ -383,33 +485,45 @@ class VideoAutoSplitter:
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE
         )
+        process1 = await asyncio.create_subprocess_exec(
+            "rclone", "copyto", str(output_file.with_suffix(".png")),
+            f"r2:2025-worlds-match-clip/{output_file.with_suffix('.png').name}",
+            stdout = asyncio.subprocess.PIPE,
+            stderr = asyncio.subprocess.PIPE
+        )
 
         stdout, stderr = await process.communicate()
 
         if process.returncode == 0:
             logger.info(f"rclone succeeded:\n{stdout.decode().strip()}")
         else:
-            logger.error(f"rclone failed with return code {process.returncode}")
+            logger.error(f"rclone failed with return code {process1.returncode}")
+            logger.error(f"stderr: {stderr.decode().strip()}")
+        if process1.returncode == 0:
+            logger.info(f"rclone succeeded:\n{stdout.decode().strip()}")
+        else:
+            logger.error(f"rclone failed with return code {process1.returncode}")
             logger.error(f"stderr: {stderr.decode().strip()}")
 
+        logger.debug(f'Teams in match: {teams}')
         # Prepare POST payload
         post_data = {
             "title": self.current_match_string,
-            "divisionId": f"FTCCMP1JEMI",  # {self.division[:4].upper()}
-            "thumbnailUrl": f"https://YOURSITE/{output_file.stem}.jpg",
+            "divisionId": self.division_code,
+            "thumbnailUrl": f"https://YOURSITE/{output_file.stem}.png",
             "videoUrl": f"https://YOURSITE/{output_file.name}",
-            "teamNumbers": [369, 701, 3188, 3189]
+            "teamNumbers": [teams]
         }
 
         headers = {
-            "Authorization": "Bearer YOUR_TOKEN",
+            "Authorization": "Bearer YOURTOKEN",
             "Content-Type": "application/json"
         }
 
         # Send POST request using aiohttp
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post("https://YOUR_OTHER_SITE/api/clips/add", json = post_data,
+                async with session.post("https://YOURSITE/api/clips/add", json = post_data,
                                         headers = headers) as response:
                     if response.status == 200:
                         json_resp = await response.json()
@@ -454,7 +568,7 @@ class VideoAutoSplitter:
                         logger.info("Reached end of current video, checking for more content...")
 
                         if self.stream_process and self.stream_process.poll() is not None:
-                            logger.warning("Streamlink process has exited — attempting to restart...")
+                            logger.warning("Streamlink process has exited â€” attempting to restart...")
                             self.live_download()  # Restart the streamlink process
                             time.sleep(15)  # Allow some time for the process to restart
                             continue
@@ -514,7 +628,7 @@ class VideoAutoSplitter:
                             if 0 < timer_seconds < 150 and not self.match_active:
                                 self.match_active = True
                                 logger.info(f"Match timer started at {timer_text}")
-                                self.frame_increment = 1 # to make sure we actually check timer constantly
+                                self.frame_increment = 1  # to make sure we actually check timer constantly
                                 self.last_split_frame_time = max(0,
                                                                  self.curr_frame_time - 15)  # Start 10-15 seconds earlier
                                 logger.info(
@@ -532,17 +646,22 @@ class VideoAutoSplitter:
                                     match_type = "q" if "Qual" in self.current_match_string else "f" if "Final" in self.current_match_string else "p"
                                     if match_type == "q":
                                         match_numbers = re.findall(r"\d+", self.current_match_string)
-                                        match_number = f"{match_numbers[0]}" if len(match_numbers) == 2 else match_numbers[0]
+                                        match_number = f"{match_numbers[0]}" if len(match_numbers) == 2 else \
+                                        match_numbers[0]
                                     elif match_type == "f":
                                         match_number = re.search(r"\d+", self.current_match_string).group()
                                     else:  # Playoffs
                                         match_number = re.search(r"\d+", self.current_match_string).group()
-                                    output_file = Path("/root/match-video-autosplitter") / f"{self.division}-{match_type}{match_number}-{run_number:02d}.mp4"
+                                    while (
+                                            self.output_dir / f"{self.division_4code}-{match_type}{match_number}-{run_number:02d}.mp4").exists():
+                                        run_number += 1
+                                    output_file = Path(
+                                        "/root/match-video-autosplitter") / f"{self.division_4code}-{match_type}{match_number}-{run_number:02d}.mp4"
                                     self.split_video(self.last_split_frame_time, diff_time, str(output_file))
                                     logger.info(
                                         f"Match recording ended at {self.curr_frame_time}. File saved: {output_file}")
                                     self.frame_increment = 5  # back to regular waiting time
-                                    asyncio.run(self.upload_and_notify(output_file))
+                                    asyncio.run(self.upload_and_notify(output_file, self.current_match_string))
                             else:
                                 self.frames_with_zero_timer = 0
 
@@ -609,7 +728,8 @@ def main():
                         default = "0.53,0.773148148,0.3,0.05")
     parser.add_argument("--division", "-d", required = True, choices = ["jemison", "ochoa", "franklin", "edison"],
                         help = "Division name (jemison, ochoa, franklin, edison)")
-
+    parser.add_argument("--username", "-u", help = "FTCEvents username for authentication")
+    parser.add_argument("--token", "-p", help = "FTCEvents token for authentication")
     # Add GUI and config file options if GUI module is available
     if has_gui:
         parser.add_argument("--gui", "-g", action = "store_true", help = "Launch GUI mode")
@@ -714,7 +834,8 @@ Video AutoSplit, courtesy of FTC #10298 Brain Stormz
         template_path = args.template,
         fallback_search_string = args.search_string,
         overlay_area_coords = overlay_area_coords,
-        match_number_area_coords = match_area_coords
+        match_number_area_coords = match_area_coords,
+        division = args.division
     )
 
     if args.template:
