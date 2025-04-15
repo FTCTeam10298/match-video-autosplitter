@@ -30,6 +30,9 @@ import threading
 import tempfile
 import cv2
 import numpy as np
+import requests
+import aiohttp
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -48,7 +51,7 @@ class VideoAutoSplitter:
     def __init__(self, stream_url, output_file, output_dir = None, frame_increment = 5, max_attempts = 30,
                  template_path = None, fallback_search_string = "CH",
                  overlay_area_coords = (0.0, 0.77, 0.1, 0.055),
-                 match_number_area_coords = (0.53, 0.773148148, 0.3, 0.05)):
+                 match_number_area_coords = (0.53, 0.773148148, 0.3, 0.05), division = "CMP1"):
         """Initialize the video splitter with parameters"""
         self.stream_url = stream_url
         self.output_file = output_file
@@ -58,7 +61,8 @@ class VideoAutoSplitter:
         self.max_attempts = max_attempts
         self.template_path = Path(template_path) if template_path else None
         self.fallback_search_string = fallback_search_string
-
+        self.division = re.search(r"twitch\.tv/firstinspires_(\w+)", stream_url).group(
+            1) if "twitch.tv/firstinspires_" in stream_url else division  # Division name
         # Configurable areas
         self.overlay_area_coords = overlay_area_coords
         self.match_number_area_coords = match_number_area_coords
@@ -365,6 +369,57 @@ class VideoAutoSplitter:
             logger.error(f"Failed to get video info: {e}")
             return False
 
+
+
+    async def upload_and_notify(self, output_file):
+        """Upload the video segment and notify the server."""
+        # Wait 10 seconds to allow file to finalize
+        await asyncio.sleep(30)
+
+        # Run rclone asynchronously
+        process = await asyncio.create_subprocess_exec(
+            "rclone", "copyto", str(output_file),
+            f"r2:2025-worlds-match-clip/{output_file.name}",
+            stdout = asyncio.subprocess.PIPE,
+            stderr = asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            logger.info(f"rclone succeeded:\n{stdout.decode().strip()}")
+        else:
+            logger.error(f"rclone failed with return code {process.returncode}")
+            logger.error(f"stderr: {stderr.decode().strip()}")
+
+        # Prepare POST payload
+        post_data = {
+            "title": self.current_match_string,
+            "divisionId": f"FTCCMP1JEMI",  # {self.division[:4].upper()}
+            "thumbnailUrl": f"https://YOURSITE/{output_file.stem}.jpg",
+            "videoUrl": f"https://YOURSITE/{output_file.name}",
+            "teamNumbers": [369, 701, 3188, 3189]
+        }
+
+        headers = {
+            "Authorization": "Bearer YOUR_TOKEN",
+            "Content-Type": "application/json"
+        }
+
+        # Send POST request using aiohttp
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post("https://YOUR_OTHER_SITE/api/clips/add", json = post_data,
+                                        headers = headers) as response:
+                    if response.status == 200:
+                        json_resp = await response.json()
+                        logger.info(f"Successfully sent POST request: {json_resp}")
+                    else:
+                        text = await response.text()
+                        logger.error(f"Failed to send POST request: {response.status}, {text}")
+            except Exception as e:
+                logger.error(f"Error sending POST request: {e}")
+
     def process(self):
         """Main processing loop."""
         try:
@@ -376,6 +431,7 @@ class VideoAutoSplitter:
 
             while not self.video_filename.exists() or self.video_filename.stat().st_size < 1024:
                 logger.info("Waiting for stream.ts to be created and grow...")
+                import time
                 time.sleep(5)
                 wait_time += 1
                 if wait_time > max_wait_time:
@@ -420,6 +476,7 @@ class VideoAutoSplitter:
                             self.video_number += 1
                             output_file = self.output_dir / f"{self.video_number} - {self.current_match_string}.mp4"
                             self.split_video(self.last_split_frame_time, diff_time, str(output_file))
+
                             # Wait for all encoder threads to finish
                             for p in self.encoder_processes:
                                 if p.is_alive():
@@ -471,11 +528,21 @@ class VideoAutoSplitter:
                                     self.match_active = False
                                     diff_time = self.curr_frame_time - self.last_split_frame_time
                                     self.video_number += 1
-                                    output_file = self.output_dir / f"{self.video_number} - {self.current_match_string}.mp4"
+                                    run_number = 1  # Default run number
+                                    match_type = "q" if "Qual" in self.current_match_string else "f" if "Final" in self.current_match_string else "p"
+                                    if match_type == "q":
+                                        match_numbers = re.findall(r"\d+", self.current_match_string)
+                                        match_number = f"{match_numbers[0]}" if len(match_numbers) == 2 else match_numbers[0]
+                                    elif match_type == "f":
+                                        match_number = re.search(r"\d+", self.current_match_string).group()
+                                    else:  # Playoffs
+                                        match_number = re.search(r"\d+", self.current_match_string).group()
+                                    output_file = Path("/root/match-video-autosplitter") / f"{self.division}-{match_type}{match_number}-{run_number:02d}.mp4"
                                     self.split_video(self.last_split_frame_time, diff_time, str(output_file))
                                     logger.info(
                                         f"Match recording ended at {self.curr_frame_time}. File saved: {output_file}")
                                     self.frame_increment = 5  # back to regular waiting time
+                                    asyncio.run(self.upload_and_notify(output_file))
                             else:
                                 self.frames_with_zero_timer = 0
 
@@ -540,6 +607,8 @@ def main():
     parser.add_argument("--match-area",
                         help = "Match number area coordinates as x,y,width,height ratios (e.g. 0.53,0.773148148,0.3,0.05)",
                         default = "0.53,0.773148148,0.3,0.05")
+    parser.add_argument("--division", "-d", required = True, choices = ["jemison", "ochoa", "franklin", "edison"],
+                        help = "Division name (jemison, ochoa, franklin, edison)")
 
     # Add GUI and config file options if GUI module is available
     if has_gui:
@@ -588,6 +657,8 @@ def main():
                 args.overlay_area = value
             elif key == "match_area" and args.match_area == "0.53,0.773148148,0.3,0.05":
                 args.match_area = value
+            elif key == "division" and args.division is None:
+                args.division = value
 
     # Print header
     print("""----------------------------------------------------
@@ -600,7 +671,7 @@ Video AutoSplit, courtesy of FTC #10298 Brain Stormz
         sys.exit(1)
 
     # Check for required dependencies
-    dependencies = ['yt-dlp', 'ffmpeg', 'ffprobe', 'tesseract', 'convert']
+    dependencies = ['yt-dlp', 'ffmpeg', 'ffprobe', 'convert']
     missing_deps = []
 
     for dep in dependencies:
