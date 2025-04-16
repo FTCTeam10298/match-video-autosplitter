@@ -426,6 +426,8 @@ class VideoAutoSplitter:
                             logger.info("Processing complete!")
                             return True
 
+                        sleep(20) # Wait for new video content to become available
+
                     # Reset attempts counter
                     self.new_data_attempts = 0
 
